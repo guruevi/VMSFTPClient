@@ -1,0 +1,7 @@
+{
+  "username": "admin",
+  "password": "admin",
+  "hostname": "localhost",
+  "destination": "data",
+  "source": "/disk0/files"
+}
