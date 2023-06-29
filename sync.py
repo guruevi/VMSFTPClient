@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+See README.md for more information
+"""
 import ftplib
 import json
 from time import mktime
