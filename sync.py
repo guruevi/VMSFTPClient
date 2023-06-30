@@ -164,7 +164,7 @@ except FileNotFoundError:
 
 # Environment variables overwrite the keys in config
 for key in config:
-    environ.get(f"VMSFTP_{key.upper()}", config[key])
+    config[key] = environ.get(f"VMSFTP_{key.upper()}", config[key])
 
 # Set variables
 ROOT_DIRECTORY = config["source"]
