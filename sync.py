@@ -8,10 +8,12 @@ import json
 from time import mktime
 from os import path, makedirs, utime, environ
 from datetime import datetime
+
+
 # from pprint import pprint
 
 
-def change_dir(path: list):
+def change_dir(path: list, ftp: ftplib.FTP):
     global CURRENT_DIRECTORY
 
     if CURRENT_DIRECTORY == path:
@@ -22,7 +24,7 @@ def change_dir(path: list):
     CURRENT_DIRECTORY = path
 
 
-def download(file_obj: dict):
+def download(file_obj: dict, ftp: ftplib.FTP):
     """Download a file from the ftp server."""
 
     # Remove root_directory from the parent_directory
@@ -105,11 +107,14 @@ def parse_list_output(line: str, list_of_files: list):
     )
 
 
-def fetch_dirs():
+def fetch_dirs(ftp: ftplib.FTP):
     global CURRENT_DIRECTORY
     global PREVIOUS_LINE
 
-    change_dir(CURRENT_DIRECTORY)
+    if not CURRENT_DIRECTORY:
+        change_dir(ROOT_DIRECTORY, ftp)
+
+    change_dir(CURRENT_DIRECTORY, ftp)
     print(f"Scanning {CURRENT_DIRECTORY}")
 
     # List the directory and callback the function to parse each line
@@ -120,14 +125,34 @@ def fetch_dirs():
         """ This is a helper function to keep list_of_files local to this instance of fetch_dirs"""
         parse_list_output(line, list_of_files)
 
+    # Run this command for 60s, if it times out, try again
     ftp.dir(parse_list)
+
     ALL_FILES.extend(list_of_files)
+
+    ftp.close()
 
     # Loop through the list of files and query every subdirectory
     for file_obj in list_of_files:
         if file_obj["type"] != "file":
-            change_dir(f"{file_obj['parent_directory']}/{file_obj['name']}")
-            fetch_dirs()
+            conn = open_connection()
+            change_dir(f"{file_obj['parent_directory']}/{file_obj['name']}", conn)
+            fetch_dirs(conn)
+
+
+def open_connection():
+    # Open ftp connection
+    try:
+        ftp = ftplib.FTP(config["hostname"], timeout=60)
+        ftp.login(config["username"], config["password"])
+    except ConnectionRefusedError:
+        print(json.dumps({"complete": 1, "code": 10061, "description": "Connection Refused"}))
+        exit(10061)
+    except ftplib.error_perm:
+        print(json.dumps({"complete": 1, "code": 430, "description": "Connection Refused"}))
+        exit(430)
+
+    return ftp
 
 
 # Open config.json
@@ -148,30 +173,17 @@ DESTINATION = config["destination"]
 PREVIOUS_LINE = ""
 ALL_FILES = []
 
-# Open ftp connection
-try:
-    ftp = ftplib.FTP(config["hostname"])
-    ftp.login(config["username"], config["password"])
-    change_dir(ROOT_DIRECTORY)
-except ConnectionRefusedError:
-    print(json.dumps({"complete": 1, "code": 10061, "description": "Connection Refused"}))
-    exit(10061)
-except ftplib.error_perm:
-    print(json.dumps({"complete": 1, "code": 430, "description": "Connection Refused"}))
-    exit(430)
-
-fetch_dirs()
+fetch_dirs(open_connection())
 
 counter = 0
 file_count = len(ALL_FILES)
 print(f"Found {file_count} file objects")
 
 for file in ALL_FILES:
-    download(file)
-    # Format percentage with 2 decimal places
-    percentage = "{:.2f}".format(counter / file_count * 100)
+    # download(file, open_connection())
+    percentage = round(counter / file_count, 1)
     print(json.dumps({"progress": percentage}))
     counter += 1
+
 print(json.dumps({"progress": 1}))
-ftp.close()
 print(json.dumps({"complete": 1, "code": 0}))
