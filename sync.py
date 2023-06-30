@@ -22,11 +22,11 @@ def timeout_handler(*_):
 def change_dir(directory: str, ftp: ftplib.FTP):
     global CURRENT_DIRECTORY
 
-    if not CURRENT_DIRECTORY:
-        CURRENT_DIRECTORY = ROOT_DIRECTORY
-
     if CURRENT_DIRECTORY == directory:
         return True
+
+    if not CURRENT_DIRECTORY:
+        CURRENT_DIRECTORY = ROOT_DIRECTORY
 
     print(f"Changing directories to {directory}")
     alarm(10)
@@ -53,7 +53,7 @@ def download(file_obj: dict, ftp: ftplib.FTP):
     destination_path = path.join(DESTINATION, *path_without_root.split("/"))
     destination_file = path.join(destination_path, file_obj["name"])
 
-    if file_obj["version"] > 1:
+    if int(file_obj["version"]) > 1:
         destination_file = f"{destination_file}_v{file_obj['version']}"
 
     # Check if the file already exists
@@ -79,8 +79,15 @@ def download(file_obj: dict, ftp: ftplib.FTP):
     if not change_dir(file_obj["parent_directory"], ftp):
         return
 
-    print(f"Downloading {file_obj['name']}")
-    ftp.retrbinary(f'RETR {file_obj["name"]}', open(destination_file, 'wb').write)
+    print(f"Downloading {file_obj['name']} - v{file_obj['version']}")
+    try:
+        ftp.retrbinary(f'RETR {file_obj["name"]};{file_obj["version"]}', open(destination_file, 'wb').write)
+    except ftplib.error_temp:
+        print("Temporary error downloading file")
+        return
+    except ftplib.error_perm:
+        print("Invalid file")
+        return
 
     # Set timestamp on destination_file
     utime(destination_file, (file_obj["creation"], file_obj["creation"]))
@@ -167,7 +174,7 @@ def fetch_dirs(directory: str, ftp: ftplib.FTP):
 
     # Loop through the list of files and query every subdirectory
     for file_obj in list_of_files:
-        if file_obj["type"] != "file":
+        if file_obj["type"] != "file" and config['recursive']:
             connection = open_connection()
             fetch_dirs(f"{file_obj['parent_directory']}/{file_obj['name']}", connection)
 

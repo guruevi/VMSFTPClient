@@ -3,5 +3,6 @@
   "password": "admin",
   "hostname": "localhost",
   "destination": "data",
-  "source": "/disk0/files"
+  "source": "/disk0/files",
+  "recursive": true
 }
