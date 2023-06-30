@@ -5,4 +5,7 @@ This does translate the versioning file system for OpenVMS to Unix-style filenam
 
 This was tested against OpenVMS 8.3, not sure about the details of other FTP servers on VMS
 
-Output JSON adapted to run as a plugin in Cronicle
+## Use in Cronicle/Docker etc
+Output JSON adapted to run as a plugin in Cronicle with rudimentary progress
+
+Reads keys from config.json and override them with environment variables prefixed with VMSFTP_

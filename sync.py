@@ -6,17 +6,24 @@ See README.md for more information
 import ftplib
 import json
 from time import mktime
-from os import path, makedirs, utime
+from os import path, makedirs, utime, environ
 from datetime import datetime
+# from pprint import pprint
 
 
-def change_dir(path: list, ftp):
+def change_dir(path: list):
+    global CURRENT_DIRECTORY
+
+    if CURRENT_DIRECTORY == path:
+        return
+
+    print(f"Changing directories to {path}")
     ftp.cwd(path)
+    CURRENT_DIRECTORY = path
 
 
 def download(file_obj: dict):
     """Download a file from the ftp server."""
-    global CURRENT_DIRECTORY
 
     # Remove root_directory from the parent_directory
     path_without_root = file_obj["parent_directory"].replace(ROOT_DIRECTORY, "")
@@ -33,16 +40,17 @@ def download(file_obj: dict):
         makedirs(destination_path, exist_ok=True)
     except PermissionError:
         print(json.dumps({"complete": 1, "code": 535, "description": "Permission error"}))
-        exit(1)
-    except OSError:
+        exit(535)
+    except OSError as e:
+        print(e)
         print(json.dumps({"complete": 1, "code": 553, "description": "Directory name error"}))
         exit(553)
 
-    # Switch to a new directory if necessary on the remote
-    if CURRENT_DIRECTORY != file_obj["parent_directory"]:
-        ftp.cwd(file_obj["parent_directory"])
-        CURRENT_DIRECTORY = file_obj["parent_directory"]
+    # We can make empty directories now
+    if file_obj["type"] == "dir":
+        return
 
+    change_dir(file_obj["parent_directory"])
     print(f"Downloading {file_obj['name']}")
     ftp.retrbinary("RETR " + file_obj["name"], open(destination_file, 'wb').write)
 
@@ -101,7 +109,8 @@ def fetch_dirs():
     global CURRENT_DIRECTORY
     global PREVIOUS_LINE
 
-    ftp.cwd(CURRENT_DIRECTORY)
+    change_dir(CURRENT_DIRECTORY)
+    print(f"Scanning {CURRENT_DIRECTORY}")
 
     # List the directory and callback the function to parse each line
     list_of_files = []
@@ -117,13 +126,24 @@ def fetch_dirs():
     # Loop through the list of files and query every subdirectory
     for file_obj in list_of_files:
         if file_obj["type"] != "file":
-            CURRENT_DIRECTORY = f"{file_obj['parent_directory']}/{file_obj['name']}"
+            change_dir(f"{file_obj['parent_directory']}/{file_obj['name']}")
             fetch_dirs()
 
 
-# Open config.sample.json
-config = json.load(open("config.json"))
-ROOT_DIRECTORY = CURRENT_DIRECTORY = config["source"]
+# Open config.json
+try:
+    config = json.load(open("config.json"))
+except FileNotFoundError:
+    print("default config.json not found")
+    exit(1)
+
+# Environment variables overwrite the keys in config
+for key in config:
+    environ.get(f"VMSFTP_{key.upper()}", config[key])
+
+# Set variables
+ROOT_DIRECTORY = config["source"]
+CURRENT_DIRECTORY = ""
 DESTINATION = config["destination"]
 PREVIOUS_LINE = ""
 ALL_FILES = []
@@ -132,6 +152,7 @@ ALL_FILES = []
 try:
     ftp = ftplib.FTP(config["hostname"])
     ftp.login(config["username"], config["password"])
+    change_dir(ROOT_DIRECTORY)
 except ConnectionRefusedError:
     print(json.dumps({"complete": 1, "code": 10061, "description": "Connection Refused"}))
     exit(10061)
