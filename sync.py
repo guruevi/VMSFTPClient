@@ -180,7 +180,9 @@ file_count = len(ALL_FILES)
 print(f"Found {file_count} file objects")
 
 for file in ALL_FILES:
-    # download(file, open_connection())
+    conn = open_connection()
+    download(file, conn)
+    conn.close()
     percentage = round(counter / file_count, 1)
     print(json.dumps({"progress": percentage}))
     counter += 1
