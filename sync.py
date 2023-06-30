@@ -13,15 +13,15 @@ from datetime import datetime
 # from pprint import pprint
 
 
-def change_dir(path: list, ftp: ftplib.FTP):
+def change_dir(directory: str, ftp: ftplib.FTP):
     global CURRENT_DIRECTORY
 
-    if CURRENT_DIRECTORY == path:
+    if CURRENT_DIRECTORY == directory:
         return
 
-    print(f"Changing directories to {path}")
-    ftp.cwd(path)
-    CURRENT_DIRECTORY = path
+    print(f"Changing directories to {directory}")
+    ftp.cwd(directory)
+    CURRENT_DIRECTORY = directory
 
 
 def download(file_obj: dict, ftp: ftplib.FTP):
@@ -52,13 +52,12 @@ def download(file_obj: dict, ftp: ftplib.FTP):
     if file_obj["type"] == "dir":
         return
 
-    change_dir(file_obj["parent_directory"])
+    change_dir(file_obj["parent_directory"], ftp)
     print(f"Downloading {file_obj['name']}")
-    ftp.retrbinary("RETR " + file_obj["name"], open(destination_file, 'wb').write)
+    ftp.retrbinary(f'RETR {file_obj["name"]}', open(destination_file, 'wb').write)
 
     # Set timestamp on destination_file
-    timestamp: datetime = file_obj["creation"]
-    utime(destination_file, (timestamp, timestamp))
+    utime(destination_file, (file_obj["creation"], file_obj["creation"]))
 
     print(f"Downloaded {file_obj['name']} to {destination_file}")
 
@@ -135,9 +134,9 @@ def fetch_dirs(ftp: ftplib.FTP):
     # Loop through the list of files and query every subdirectory
     for file_obj in list_of_files:
         if file_obj["type"] != "file":
-            conn = open_connection()
-            change_dir(f"{file_obj['parent_directory']}/{file_obj['name']}", conn)
-            fetch_dirs(conn)
+            connection = open_connection()
+            change_dir(f"{file_obj['parent_directory']}/{file_obj['name']}", connection)
+            fetch_dirs(connection)
 
 
 def open_connection():
