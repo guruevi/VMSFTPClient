@@ -129,7 +129,7 @@ def fetch_dirs(ftp: ftplib.FTP):
 
     ALL_FILES.extend(list_of_files)
 
-    ftp.close()
+    close_connection(ftp)
 
     # Loop through the list of files and query every subdirectory
     for file_obj in list_of_files:
@@ -152,6 +152,13 @@ def open_connection():
         exit(430)
 
     return ftp
+
+
+def close_connection(ftp: ftplib.FTP):
+    global CURRENT_DIRECTORY
+
+    CURRENT_DIRECTORY = ""
+    ftp.close()
 
 
 # Open config.json
@@ -178,13 +185,15 @@ counter = 0
 file_count = len(ALL_FILES)
 print(f"Found {file_count} file objects")
 
+conn = open_connection()
 for file in ALL_FILES:
-    conn = open_connection()
     download(file, conn)
-    conn.close()
+
     percentage = round(counter / file_count, 1)
     print(json.dumps({"progress": percentage}))
     counter += 1
+
+close_connection(conn)
 
 print(json.dumps({"progress": 1}))
 print(json.dumps({"complete": 1, "code": 0}))
