@@ -8,20 +8,41 @@ import json
 from time import mktime
 from os import path, makedirs, utime, environ
 from datetime import datetime
+from signal import alarm, signal, SIGALRM, SIGINT
 
 
 # from pprint import pprint
 
 
+def timeout_handler(*_):
+    """Handle timeouts"""
+    raise ftplib.error_temp("Command timed out")
+
+
 def change_dir(directory: str, ftp: ftplib.FTP):
     global CURRENT_DIRECTORY
 
+    if not CURRENT_DIRECTORY:
+        CURRENT_DIRECTORY = ROOT_DIRECTORY
+
     if CURRENT_DIRECTORY == directory:
-        return
+        return True
 
     print(f"Changing directories to {directory}")
-    ftp.cwd(directory)
+    alarm(10)
+    try:
+        ftp.cwd(directory)
+    except ftplib.error_temp:
+        print("Timeout changing directories")
+        return False
+    except ftplib.error_perm:
+        print("Invalid directory")
+        return False
+    finally:
+        alarm(0)
+
     CURRENT_DIRECTORY = directory
+    return True
 
 
 def download(file_obj: dict, ftp: ftplib.FTP):
@@ -32,11 +53,14 @@ def download(file_obj: dict, ftp: ftplib.FTP):
     destination_path = path.join(DESTINATION, *path_without_root.split("/"))
     destination_file = path.join(destination_path, file_obj["name"])
 
+    if file_obj["version"] > 1:
+        destination_file = f"{destination_file}_v{file_obj['version']}"
+
     # Check if the file already exists
-    if path.exists(destination_file) and \
-            path.getmtime(destination_file) == file_obj["creation"]:
-        print(f"File {file_obj['name']} already exists with same date")
-        return
+    if path.exists(destination_file):
+        if path.getmtime(destination_file) == file_obj["creation"]:
+            print(f"File {file_obj['name']} already exists with same date")
+            return
 
     try:
         makedirs(destination_path, exist_ok=True)
@@ -52,7 +76,9 @@ def download(file_obj: dict, ftp: ftplib.FTP):
     if file_obj["type"] == "dir":
         return
 
-    change_dir(file_obj["parent_directory"], ftp)
+    if not change_dir(file_obj["parent_directory"], ftp):
+        return
+
     print(f"Downloading {file_obj['name']}")
     ftp.retrbinary(f'RETR {file_obj["name"]}', open(destination_file, 'wb').write)
 
@@ -106,26 +132,34 @@ def parse_list_output(line: str, list_of_files: list):
     )
 
 
-def fetch_dirs(ftp: ftplib.FTP):
-    global CURRENT_DIRECTORY
+def fetch_dirs(directory: str, ftp: ftplib.FTP):
     global PREVIOUS_LINE
 
-    if not CURRENT_DIRECTORY:
-        change_dir(ROOT_DIRECTORY, ftp)
+    if not change_dir(directory, ftp):
+        return
 
-    change_dir(CURRENT_DIRECTORY, ftp)
-    print(f"Scanning {CURRENT_DIRECTORY}")
+    print(f"Scanning {directory}")
 
     # List the directory and callback the function to parse each line
     list_of_files = []
-    PREVIOUS_LINE = ""
 
     def parse_list(line: str):
         """ This is a helper function to keep list_of_files local to this instance of fetch_dirs"""
         parse_list_output(line, list_of_files)
 
-    # Run this command for 60s, if it times out, try again
-    ftp.dir(parse_list)
+    # Run the DIR command for 5m before timing out
+    alarm(300)
+    try:
+        ftp.dir(parse_list)
+    except ftplib.error_perm:
+        print("Invalid directory")
+        return
+    except ftplib.error_temp:
+        print("Timeout listing directory")
+        return
+    finally:
+        alarm(0)
+        PREVIOUS_LINE = ""
 
     ALL_FILES.extend(list_of_files)
 
@@ -135,8 +169,7 @@ def fetch_dirs(ftp: ftplib.FTP):
     for file_obj in list_of_files:
         if file_obj["type"] != "file":
             connection = open_connection()
-            change_dir(f"{file_obj['parent_directory']}/{file_obj['name']}", connection)
-            fetch_dirs(connection)
+            fetch_dirs(f"{file_obj['parent_directory']}/{file_obj['name']}", connection)
 
 
 def open_connection():
@@ -178,8 +211,9 @@ CURRENT_DIRECTORY = ""
 DESTINATION = config["destination"]
 PREVIOUS_LINE = ""
 ALL_FILES = []
+signal(SIGALRM, timeout_handler)
 
-fetch_dirs(open_connection())
+fetch_dirs(ROOT_DIRECTORY, open_connection())
 
 counter = 0
 file_count = len(ALL_FILES)
