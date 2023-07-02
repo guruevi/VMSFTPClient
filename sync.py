@@ -6,9 +6,9 @@ See README.md for more information
 import ftplib
 import json
 from time import mktime
-from os import path, makedirs, utime, environ
+from os import path, makedirs, utime, environ, rename
 from datetime import datetime
-from signal import alarm, signal, SIGALRM, SIGINT
+from signal import alarm, signal, SIGALRM
 
 
 # from pprint import pprint
@@ -33,6 +33,7 @@ def change_dir(directory: str, ftp: ftplib.FTP):
     try:
         ftp.cwd(directory)
     except ftplib.error_temp:
+        ftp.abort()
         print("Timeout changing directories")
         return False
     except ftplib.error_perm:
@@ -52,6 +53,7 @@ def download(file_obj: dict, ftp: ftplib.FTP):
     path_without_root = file_obj["parent_directory"].replace(ROOT_DIRECTORY, "")
     destination_path = path.join(DESTINATION, *path_without_root.split("/"))
     destination_file = path.join(destination_path, file_obj["name"])
+    destination_file_temp = f"{destination_file}.part"
 
     if int(file_obj["version"]) > 1:
         destination_file = f"{destination_file}_v{file_obj['version']}"
@@ -81,7 +83,9 @@ def download(file_obj: dict, ftp: ftplib.FTP):
 
     print(f"Downloading {file_obj['name']} - v{file_obj['version']}")
     try:
-        ftp.retrbinary(f'RETR {file_obj["name"]};{file_obj["version"]}', open(destination_file, 'wb').write)
+        ftp.retrbinary(f'RETR {file_obj["name"]};{file_obj["version"]}', open(destination_file_temp, 'wb').write)
+        # rename the file to the correct name
+        rename(destination_file_temp, destination_file)
     except ftplib.error_temp:
         print("Temporary error downloading file")
         return
@@ -122,19 +126,23 @@ def parse_list_output(line: str, list_of_files: list):
         filetype = "dir"
         filename = filename.replace('.DIR', '')
 
-    block_size = int(lines[1].split("/")[0])
+    # This is irrelevant as it doesn't match Unix type blocks
+    # block_size = int(lines[1].split("/")[0])
 
-    creation_time = datetime.strptime(f"{lines[2]} {lines[3]}", "%d-%b-%Y %H:%M:%S")
+    if len(lines) > 1:
+        creation_time = mktime(datetime.strptime(f"{lines[2]} {lines[3]}", "%d-%b-%Y %H:%M:%S").timetuple())
+    else:
+        # Set creation time to 1970 to indicate but also don't re-download
+        creation_time = 0
 
     list_of_files.append(
         {
             "parent_directory": CURRENT_DIRECTORY,
             "name": filename,
             "version": version,
-            "bytes": block_size * 512,
-            "creation": mktime(creation_time.timetuple()),
-            "type": filetype,
-            "downloaded": 0
+            # "bytes": block_size * 512,
+            "creation": creation_time,
+            "type": filetype
         }
     )
 
@@ -154,19 +162,36 @@ def fetch_dirs(directory: str, ftp: ftplib.FTP):
         """ This is a helper function to keep list_of_files local to this instance of fetch_dirs"""
         parse_list_output(line, list_of_files)
 
+    try_nlst = False
     # Run the DIR command for 5m before timing out
-    alarm(300)
+    alarm(60)
     try:
         ftp.dir(parse_list)
     except ftplib.error_perm:
         print("Invalid directory")
         return
     except ftplib.error_temp:
-        print("Timeout listing directory")
-        return
+        ftp.abort()
+        print("Timeout listing directory, trying NLST")
+        try_nlst = True
     finally:
         alarm(0)
         PREVIOUS_LINE = ""
+
+    # The server is braindead and large directories time out. NLST is faster but doesn't give metadata information.
+    if try_nlst:
+        alarm(300)
+        try:
+            files = ftp.nlst()
+            for f in files:
+                parse_list_output(f, list_of_files)
+        except ftplib.error_temp:
+            ftp.abort()
+            print("Timeout listing directory")
+            return
+        finally:
+            alarm(0)
+            PREVIOUS_LINE = ""
 
     ALL_FILES.extend(list_of_files)
 
