@@ -33,7 +33,6 @@ def change_dir(directory: str, ftp: ftplib.FTP):
     try:
         ftp.cwd(directory)
     except ftplib.error_temp:
-        ftp.abort()
         print("Timeout changing directories")
         return False
     except ftplib.error_perm:
@@ -171,7 +170,6 @@ def fetch_dirs(directory: str, ftp: ftplib.FTP):
         print("Invalid directory")
         return
     except ftplib.error_temp:
-        ftp.abort()
         print("Timeout listing directory, trying NLST")
         try_nlst = True
     finally:
@@ -182,11 +180,13 @@ def fetch_dirs(directory: str, ftp: ftplib.FTP):
     if try_nlst:
         alarm(300)
         try:
+            close_connection(ftp)
+            ftp = open_connection()
+            change_dir(directory, ftp)
             files = ftp.nlst()
             for f in files:
                 parse_list_output(f, list_of_files)
         except ftplib.error_temp:
-            ftp.abort()
             print("Timeout listing directory")
             return
         finally:
