@@ -19,6 +19,17 @@ def timeout_handler(*_):
     raise ftplib.error_temp("Command timed out")
 
 
+def set_timeout(timeout: int):
+    """Set the timeout for the next command connection"""
+    signal(SIGALRM, timeout_handler)
+    alarm(timeout)
+
+
+def unset_timeout():
+    """Disable the timeout for the next command connection"""
+    alarm(0)
+
+
 def change_dir(directory: str, ftp: ftplib.FTP):
     global CURRENT_DIRECTORY
 
@@ -29,7 +40,7 @@ def change_dir(directory: str, ftp: ftplib.FTP):
         CURRENT_DIRECTORY = ROOT_DIRECTORY
 
     print(f"Changing directories to {directory}")
-    alarm(10)
+    set_timeout(5)
     try:
         ftp.cwd(directory)
     except ftplib.error_temp:
@@ -39,7 +50,7 @@ def change_dir(directory: str, ftp: ftplib.FTP):
         print("Invalid directory")
         return False
     finally:
-        alarm(0)
+        unset_timeout()
 
     CURRENT_DIRECTORY = directory
     return True
@@ -163,7 +174,7 @@ def fetch_dirs(directory: str, ftp: ftplib.FTP):
 
     try_nlst = False
     # Run the DIR command for 5m before timing out
-    alarm(60)
+    set_timeout(60)
     try:
         ftp.dir(parse_list)
     except ftplib.error_perm:
@@ -173,25 +184,27 @@ def fetch_dirs(directory: str, ftp: ftplib.FTP):
         print("Timeout listing directory, trying NLST")
         try_nlst = True
     finally:
-        alarm(0)
+        unset_timeout()
         PREVIOUS_LINE = ""
 
     # The server is braindead and large directories time out. NLST is faster but doesn't give metadata information.
-    if try_nlst:
-        alarm(300)
+    if try_nlst and config['try_nlst']:
+        signal(SIGALRM, timeout_handler)
+        set_timeout(120)
         try:
             close_connection(ftp)
             ftp = open_connection()
             change_dir(directory, ftp)
             files = ftp.nlst()
-            for f in files:
-                parse_list_output(f, list_of_files)
         except ftplib.error_temp:
             print("Timeout listing directory")
             return
         finally:
-            alarm(0)
+            unset_timeout()
             PREVIOUS_LINE = ""
+
+        for f in files:
+            parse_list_output(f, list_of_files)
 
     ALL_FILES.extend(list_of_files)
 
