@@ -20,6 +20,17 @@ def timeout_handler(*_):
     raise ftplib.error_temp("Command timed out")
 
 
+def set_timeout(timeout: int):
+    """Set the timeout for the next command connection"""
+    signal(SIGALRM, timeout_handler)
+    alarm(timeout)
+
+
+def unset_timeout():
+    """Disable the timeout for the next command connection"""
+    alarm(0)
+
+
 def change_dir(directory: str, ftp: ftplib.FTP):
     global CURRENT_DIRECTORY
     global PREVIOUS_LINE
@@ -33,7 +44,7 @@ def change_dir(directory: str, ftp: ftplib.FTP):
         CURRENT_DIRECTORY = ROOT_DIRECTORY
 
     print_debug(f"Changing directories to {directory}")
-    alarm(10)
+
     try:
         ftp.cwd(directory)
     except ftplib.error_temp:
@@ -42,8 +53,6 @@ def change_dir(directory: str, ftp: ftplib.FTP):
     except ftplib.error_perm:
         print("Invalid directory")
         return False
-    finally:
-        alarm(0)
 
     CURRENT_DIRECTORY = directory
     return True
@@ -175,8 +184,9 @@ def fetch_dirs(directory: str, ftp: ftplib.FTP):
             list_of_files.append(parsed)
 
     try_nlst = False
-    # Run the DIR command for 60s before timing out
-    alarm(CONFIG.get("timeout_list", 60))
+
+    # Run the DIR command
+    set_timeout(CONFIG.get("timeout_list", 60))
     try:
         ftp.dir(parse_list)
     except ftplib.error_perm:
@@ -186,11 +196,11 @@ def fetch_dirs(directory: str, ftp: ftplib.FTP):
         print("Timeout listing directory with LIST")
         try_nlst = CONFIG.get("try_nlst", False)
     finally:
-        alarm(0)
+        unset_timeout()
 
     # The server is braindead and large directories time out. NLST is faster but doesn't give metadata information.
     if try_nlst:
-        alarm(CONFIG.get("timeout_nlst", 60))
+        set_timeout(CONFIG.get("timeout_nlst", 60))
         try:
             change_dir(directory, ftp)
             files = ftp.nlst()
@@ -200,7 +210,7 @@ def fetch_dirs(directory: str, ftp: ftplib.FTP):
             print("Timeout listing directory with NLST")
             return
         finally:
-            alarm(0)
+            unset_timeout()
 
     ALL_FILES.extend(list_of_files)
 
@@ -240,7 +250,7 @@ def parse_config():
     except FileNotFoundError:
         print("config.json not found")
         c = {}
-        
+
     # Environment variables overwrite the keys in CONFIG
     for key in ["hostname",
                 "username",
@@ -260,7 +270,7 @@ def parse_config():
         if key not in c:
             print(f"Missing {key} in config.json")
             exit(1)
-            
+
     return c
 
 
