@@ -9,6 +9,7 @@ from time import mktime
 from os import path, makedirs, utime, environ, rename
 from datetime import datetime
 from signal import alarm, signal, SIGALRM
+from typing import List, Dict
 
 
 # from pprint import pprint
@@ -21,6 +22,9 @@ def timeout_handler(*_):
 
 def change_dir(directory: str, ftp: ftplib.FTP):
     global CURRENT_DIRECTORY
+    global PREVIOUS_LINE
+
+    PREVIOUS_LINE = ""
 
     if CURRENT_DIRECTORY == directory:
         return True
@@ -28,7 +32,7 @@ def change_dir(directory: str, ftp: ftplib.FTP):
     if not CURRENT_DIRECTORY:
         CURRENT_DIRECTORY = ROOT_DIRECTORY
 
-    print(f"Changing directories to {directory}")
+    print_debug(f"Changing directories to {directory}")
     alarm(10)
     try:
         ftp.cwd(directory)
@@ -45,11 +49,17 @@ def change_dir(directory: str, ftp: ftplib.FTP):
     return True
 
 
+def print_debug(param):
+    """Print debug information"""
+    if DEBUG:
+        print(param)
+
+
 def download(file_obj: dict, ftp: ftplib.FTP):
     """Download a file from the ftp server."""
 
-    # Remove root_directory from the parent_directory
-    path_without_root = file_obj["parent_directory"].replace(ROOT_DIRECTORY, "")
+    # Remove root_directory from the parent
+    path_without_root = file_obj["parent"].replace(ROOT_DIRECTORY, "")
     destination_path = path.join(DESTINATION, *path_without_root.split("/"))
     destination_file = path.join(destination_path, file_obj["name"])
     destination_file_temp = f"{destination_file}.part"
@@ -60,7 +70,7 @@ def download(file_obj: dict, ftp: ftplib.FTP):
     # Check if the file already exists
     if path.exists(destination_file):
         if path.getmtime(destination_file) == file_obj["creation"]:
-            print(f"File {file_obj['name']} already exists with same date")
+            print_debug(f"File {file_obj['name']} already exists with same date")
             return
 
     try:
@@ -73,11 +83,16 @@ def download(file_obj: dict, ftp: ftplib.FTP):
         print(json.dumps({"complete": 1, "code": 553, "description": "Directory name error"}))
         exit(553)
 
-    # We can make empty directories now
+    # We make an empty directory
     if file_obj["type"] == "dir":
+        makedirs(destination_file, exist_ok=True)
+        print_debug(f"Created directory {destination_file}")
+        # Set timestamp on directory
+        utime(destination_file, (file_obj["creation"], file_obj["creation"]))
+        # We are done now
         return
 
-    if not change_dir(file_obj["parent_directory"], ftp):
+    if not change_dir(file_obj["parent"], ftp):
         return
 
     print(f"Downloading {file_obj['name']} - v{file_obj['version']}")
@@ -89,19 +104,20 @@ def download(file_obj: dict, ftp: ftplib.FTP):
         print("Temporary error downloading file")
         return
     except ftplib.error_perm:
-        print("Invalid file")
+        print("Cannot download file (no longer exists?)")
         return
 
     # Set timestamp on destination_file
     utime(destination_file, (file_obj["creation"], file_obj["creation"]))
 
-    print(f"Downloaded {file_obj['name']} to {destination_file}")
+    print_debug(f"Downloaded {file_obj['name']} to {destination_file}")
 
 
-def parse_list_output(line: str, list_of_files: list):
+def parse_list_output(line: str, curr_dir: str):
     """Parse the output of the list command."""
-    global CURRENT_DIRECTORY
     global PREVIOUS_LINE
+
+    print_debug(line)
 
     if not line or line.startswith("Directory") or line.startswith("Total"):
         return
@@ -125,90 +141,82 @@ def parse_list_output(line: str, list_of_files: list):
         filetype = "dir"
         filename = filename.replace('.DIR', '')
 
-    # This is irrelevant as it doesn't match Unix type blocks
-    # block_size = int(lines[1].split("/")[0])
-
     if len(lines) > 1:
         creation_time = mktime(datetime.strptime(f"{lines[2]} {lines[3]}", "%d-%b-%Y %H:%M:%S").timetuple())
     else:
-        # Set creation time to 1970 to indicate but also don't re-download
+        # Set creation time to 1970 to indicate it was completed but no times were present
         creation_time = 0
 
-    list_of_files.append(
-        {
-            "parent_directory": CURRENT_DIRECTORY,
+    obj = {
+            "parent": curr_dir,
             "name": filename,
             "version": version,
-            # "bytes": block_size * 512,
             "creation": creation_time,
             "type": filetype
         }
-    )
+    print_debug(obj)
+    return obj
 
 
 def fetch_dirs(directory: str, ftp: ftplib.FTP):
-    global PREVIOUS_LINE
-
+    """ Fetch a list of files from the ftp server. """
     if not change_dir(directory, ftp):
         return
 
     print(f"Scanning {directory}")
 
-    # List the directory and callback the function to parse each line
-    list_of_files = []
+    # Temporary list of files for this call
+    list_of_files: list[dict[str, str | float | int] | None] = []
 
     def parse_list(line: str):
-        """ This is a helper function to keep list_of_files local to this instance of fetch_dirs"""
-        parse_list_output(line, list_of_files)
+        """ This is a helper function to keep list_of_files and directory local to this instance of fetch_dirs"""
+        parsed = parse_list_output(line, directory)
+        if parsed:
+            list_of_files.append(parsed)
 
     try_nlst = False
-    # Run the DIR command for 5m before timing out
-    alarm(60)
+    # Run the DIR command for 60s before timing out
+    alarm(CONFIG.get("timeout_list", 60))
     try:
         ftp.dir(parse_list)
     except ftplib.error_perm:
         print("Invalid directory")
         return
     except ftplib.error_temp:
-        print("Timeout listing directory, trying NLST")
-        try_nlst = True
+        print("Timeout listing directory with LIST")
+        try_nlst = CONFIG.get("try_nlst", False)
     finally:
         alarm(0)
-        PREVIOUS_LINE = ""
 
     # The server is braindead and large directories time out. NLST is faster but doesn't give metadata information.
     if try_nlst:
-        alarm(300)
+        alarm(CONFIG.get("timeout_nlst", 60))
         try:
-            close_connection(ftp)
-            ftp = open_connection()
             change_dir(directory, ftp)
             files = ftp.nlst()
             for f in files:
-                parse_list_output(f, list_of_files)
+                list_of_files.append(parse_list_output(f, directory))
         except ftplib.error_temp:
-            print("Timeout listing directory")
+            print("Timeout listing directory with NLST")
             return
         finally:
             alarm(0)
-            PREVIOUS_LINE = ""
 
     ALL_FILES.extend(list_of_files)
 
-    close_connection(ftp)
-
+    print_debug(list_of_files)
     # Loop through the list of files and query every subdirectory
     for file_obj in list_of_files:
-        if file_obj["type"] != "file" and config['recursive']:
-            connection = open_connection()
-            fetch_dirs(f"{file_obj['parent_directory']}/{file_obj['name']}", connection)
+        print_debug(file_obj)
+        if file_obj["type"] == "dir" and CONFIG.get("recursive", True):
+            fetch_dirs(f"{file_obj['parent']}/{file_obj['name']}", ftp)
 
 
 def open_connection():
     # Open ftp connection
     try:
-        ftp = ftplib.FTP(config["hostname"], timeout=60)
-        ftp.login(config["username"], config["password"])
+        ftp = ftplib.FTP(CONFIG["hostname"], timeout=60)
+        ftp.login(CONFIG["username"], CONFIG["password"])
     except ConnectionRefusedError:
         print(json.dumps({"complete": 1, "code": 10061, "description": "Connection Refused"}))
         exit(10061)
@@ -221,45 +229,66 @@ def open_connection():
 
 def close_connection(ftp: ftplib.FTP):
     global CURRENT_DIRECTORY
-
     CURRENT_DIRECTORY = ""
     ftp.close()
 
 
-# Open config.json
-try:
-    config = json.load(open("config.json"))
-except FileNotFoundError:
-    print("default config.json not found")
-    exit(1)
+def parse_config():
+    # Open CONFIG.json
+    try:
+        c = json.load(open("config.json"))
+    except FileNotFoundError:
+        print("config.json not found")
+        c = {}
+        
+    # Environment variables overwrite the keys in CONFIG
+    for key in ["hostname",
+                "username",
+                "password",
+                "source",
+                "destination",
+                "debug",
+                "recursive",
+                "try_nlst",
+                "timeout_list",
+                "timeout_nlst"]:
+        env_value = environ.get(f"VMSFTP_{key.upper()}", None)
+        if env_value is not None:
+            c[key] = env_value
+    # Make sure all the required keys are present
+    for key in ["hostname", "username", "password", "source", "destination"]:
+        if key not in c:
+            print(f"Missing {key} in config.json")
+            exit(1)
+            
+    return c
 
-# Environment variables overwrite the keys in config
-for key in config:
-    config[key] = environ.get(f"VMSFTP_{key.upper()}", config[key])
+
+CONFIG = parse_config()
 
 # Set variables
-ROOT_DIRECTORY = config["source"]
+ROOT_DIRECTORY = CONFIG["source"]
 CURRENT_DIRECTORY = ""
-DESTINATION = config["destination"]
-PREVIOUS_LINE = ""
-ALL_FILES = []
+DESTINATION = CONFIG["destination"]
+DEBUG = CONFIG.get("debug", False)
 signal(SIGALRM, timeout_handler)
 
-fetch_dirs(ROOT_DIRECTORY, open_connection())
+PREVIOUS_LINE = ""
+ALL_FILES = []
+connection = open_connection()
+fetch_dirs(ROOT_DIRECTORY, connection)
 
-counter = 0
 file_count = len(ALL_FILES)
 print(f"Found {file_count} file objects")
 
-conn = open_connection()
+counter = 0
 for file in ALL_FILES:
-    download(file, conn)
+    download(file, connection)
 
-    percentage = round(counter / file_count, 1)
-    print(json.dumps({"progress": percentage}))
+    print(json.dumps({"progress": round(counter / file_count, 2)}))
     counter += 1
 
-close_connection(conn)
+close_connection(connection)
 
 print(json.dumps({"progress": 1}))
 print(json.dumps({"complete": 1, "code": 0}))
