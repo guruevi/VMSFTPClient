@@ -133,6 +133,8 @@ def download(file_obj: dict, ftp: ftplib.FTP) -> bool:
         print("Cannot download file (no longer exists?)")
         return False
 
+    fp.close()
+
     # rename the file to the correct name
     rename(destination_part, destination)
 
