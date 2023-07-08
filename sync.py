@@ -64,23 +64,27 @@ def print_debug(param):
         print(param)
 
 
-def download(file_obj: dict, ftp: ftplib.FTP):
+def download(file_obj: dict, ftp: ftplib.FTP) -> bool:
     """Download a file from the ftp server."""
+
+    print_debug(file_obj)
+
+    if int(file_obj["version"]) > 1:
+        destination_file = f'{file_obj["name"]}_v{file_obj["version"]}{file_obj["type"]}'
+    else:
+        destination_file = f'{file_obj["name"]}{file_obj["type"]}'
 
     # Remove root_directory from the parent
     path_without_root = file_obj["parent"].replace(ROOT_DIRECTORY, "")
     destination_path = path.join(DESTINATION, *path_without_root.split("/"))
-    destination_file = path.join(destination_path, file_obj["name"])
-    destination_file_temp = f"{destination_file}.part"
-
-    if int(file_obj["version"]) > 1:
-        destination_file = f"{destination_file}_v{file_obj['version']}"
+    destination = path.join(destination_path, destination_file).replace('.DIR', '')
+    destination_part = f"{destination}.part"
 
     # Check if the file already exists
-    if path.exists(destination_file):
-        if path.getmtime(destination_file) == file_obj["creation"]:
+    if path.exists(destination):
+        if path.getmtime(destination) == file_obj["creation"]:
             print_debug(f"File {file_obj['name']} already exists with same date")
-            return
+            return True
 
     try:
         makedirs(destination_path, exist_ok=True)
@@ -93,33 +97,50 @@ def download(file_obj: dict, ftp: ftplib.FTP):
         exit(553)
 
     # We make an empty directory
-    if file_obj["type"] == "dir":
-        makedirs(destination_file, exist_ok=True)
-        print_debug(f"Created directory {destination_file}")
+    if file_obj["type"] == ".DIR":
+        makedirs(destination, exist_ok=True)
+        print_debug(f"Created directory {destination}")
         # Set timestamp on directory
-        utime(destination_file, (file_obj["creation"], file_obj["creation"]))
+        utime(destination, (file_obj["creation"], file_obj["creation"]))
         # We are done now
-        return
+        return True
 
     if not change_dir(file_obj["parent"], ftp):
-        return
+        return False
+
+    # Open a filepointer for writing
+    if file_obj["type"] in [".TXT", ".LOG", ".CSV"]:
+        fp = open(destination_part, 'w')
+        bin_mode = False
+    else:
+        fp = open(destination_part, 'wb')
+        bin_mode = True
+
+    def write_callback_nl(data):
+        fp.write(data)
+        fp.write('\n')
 
     print(f"Downloading {file_obj['name']} - v{file_obj['version']}")
     try:
-        ftp.retrbinary(f'RETR {file_obj["name"]};{file_obj["version"]}', open(destination_file_temp, 'wb').write)
-        # rename the file to the correct name
-        rename(destination_file_temp, destination_file)
+        if bin_mode:
+            ftp.retrbinary(f'RETR {file_obj["name"]}{file_obj["type"]};{file_obj["version"]}', fp.write)
+        else:
+            ftp.retrlines(f'RETR {file_obj["name"]}{file_obj["type"]};{file_obj["version"]}', write_callback_nl)
     except ftplib.error_temp:
         print("Temporary error downloading file")
-        return
+        return False
     except ftplib.error_perm:
         print("Cannot download file (no longer exists?)")
-        return
+        return False
+
+    # rename the file to the correct name
+    rename(destination_part, destination)
 
     # Set timestamp on destination_file
-    utime(destination_file, (file_obj["creation"], file_obj["creation"]))
+    utime(destination, (file_obj["creation"], file_obj["creation"]))
 
-    print_debug(f"Downloaded {file_obj['name']} to {destination_file}")
+    print_debug(f"Downloaded {file_obj['name']} to {destination}")
+    return True
 
 
 def parse_list_output(line: str, curr_dir: str):
@@ -140,15 +161,10 @@ def parse_list_output(line: str, curr_dir: str):
         PREVIOUS_LINE = ""
 
     lines = line.split()
-    filename_details = lines[0].split(";")
+    filename_w_version = lines[0].split(";")
 
-    filename = filename_details[0]
-    version = filename_details[1]
-
-    filetype = "file"
-    if ".DIR;" in lines[0]:
-        filetype = "dir"
-        filename = filename.replace('.DIR', '')
+    filename = filename_w_version[0]
+    version = filename_w_version[1]
 
     if len(lines) > 1:
         creation_time = mktime(datetime.strptime(f"{lines[2]} {lines[3]}", "%d-%b-%Y %H:%M:%S").timetuple())
@@ -156,13 +172,15 @@ def parse_list_output(line: str, curr_dir: str):
         # Set creation time to 1970 to indicate it was completed but no times were present
         creation_time = 0
 
+    filename_parts = path.splitext(filename)
+
     obj = {
-            "parent": curr_dir,
-            "name": filename,
-            "version": version,
-            "creation": creation_time,
-            "type": filetype
-        }
+        "parent": curr_dir,
+        "name": filename_parts[0],
+        "version": version,
+        "creation": creation_time,
+        "type": filename_parts[1]
+    }
     print_debug(obj)
     return obj
 
@@ -218,7 +236,7 @@ def fetch_dirs(directory: str, ftp: ftplib.FTP):
     # Loop through the list of files and query every subdirectory
     for file_obj in list_of_files:
         print_debug(file_obj)
-        if file_obj["type"] == "dir" and CONFIG.get("recursive", True):
+        if file_obj["type"] == ".DIR" and CONFIG.get("recursive", True):
             fetch_dirs(f"{file_obj['parent']}/{file_obj['name']}", ftp)
 
 
