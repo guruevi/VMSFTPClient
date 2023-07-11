@@ -109,7 +109,7 @@ def download(file_obj: dict, ftp: ftplib.FTP) -> bool:
         return False
 
     # Open a filepointer for writing
-    if file_obj["type"] in [".TXT", ".LOG", ".CSV"]:
+    if file_obj["type"] in [".TXT", ".LOG", ".CSV", ".LIS"]:
         fp = open(destination_part, 'w')
         bin_mode = False
     else:
