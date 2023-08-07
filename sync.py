@@ -74,6 +74,11 @@ def download(file_obj: dict, ftp: ftplib.FTP) -> bool:
     else:
         destination_file = f'{file_obj["name"]}{file_obj["type"]}'
 
+    # If name is a dot (apparently that's legal in VMS), we rename it to _dot
+    if file_obj["name"] == "." or file_obj["name"] == "..":
+        destination_file = f'_dot_v{file_obj["version"]}{file_obj["type"]}'
+        print_debug(f"Renamed {file_obj['name']} to {destination_file}")
+
     # Remove root_directory from the parent
     path_without_root = file_obj["parent"].replace(ROOT_DIRECTORY, "")
     destination_path = path.join(DESTINATION, *path_without_root.split("/"))
