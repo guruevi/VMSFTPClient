@@ -12,9 +12,6 @@ from signal import alarm, signal, SIGALRM
 from typing import List, Dict
 
 
-# from pprint import pprint
-
-
 def timeout_handler(*_):
     """Handle timeouts"""
     raise ftplib.error_temp("Command timed out")
@@ -156,8 +153,11 @@ def parse_list_output(line: str, curr_dir: str):
 
     print_debug(line)
 
-    if not line or line.startswith("Directory") or line.startswith("Total") or "no such file" in line:
-        PREVIOUS_LINE = ""
+    if not line or line.startswith("Directory") or line.startswith("Total"):
+        return
+
+    if "no such file" in line:
+        print(f"No such file: {curr_dir}/{line}")
         return
 
     if "(" not in line and ")" not in line:
