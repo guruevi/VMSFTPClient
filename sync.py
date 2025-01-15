@@ -156,7 +156,8 @@ def parse_list_output(line: str, curr_dir: str):
 
     print_debug(line)
 
-    if not line or line.startswith("Directory") or line.startswith("Total"):
+    if not line or line.startswith("Directory") or line.startswith("Total") or "no such file" in line:
+        PREVIOUS_LINE = ""
         return
 
     if "(" not in line and ")" not in line:
