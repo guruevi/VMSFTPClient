@@ -65,16 +65,20 @@ def download(file_obj: dict, ftp: ftplib.FTP) -> bool:
     """Download a file from the ftp server."""
 
     print_debug(file_obj)
+    if not file_obj["name"]:
+        file_obj["name"] = "NO_NAME"
+        print_debug("File name set to NO_NAME")
 
+    # If name is all dots (apparently that's legal in VMS), we replace dots with _
+    if all(char == '.' for char in file_obj["name"]):
+        file_obj["name"] = file_obj["name"].replace('.', '_')
+        print_debug(f"Dot-filename renamed to {file_obj['name']}")
+
+    # Make sure we keep versions if the filesystem has them
     if int(file_obj["version"]) > 1:
         destination_file = f'{file_obj["name"]}_v{file_obj["version"]}{file_obj["type"]}'
     else:
         destination_file = f'{file_obj["name"]}{file_obj["type"]}'
-
-    # If name is a dot (apparently that's legal in VMS), we rename it to _dot
-    if file_obj["name"] == "." or file_obj["name"] == "..":
-        destination_file = f'_dot_v{file_obj["version"]}{file_obj["type"]}'
-        print_debug(f"Renamed {file_obj['name']} to {destination_file}")
 
     # Remove root_directory from the parent
     path_without_root = file_obj["parent"].replace(ROOT_DIRECTORY, "")
@@ -110,7 +114,7 @@ def download(file_obj: dict, ftp: ftplib.FTP) -> bool:
     if not change_dir(file_obj["parent"], ftp):
         return False
 
-    # Open a filepointer for writing
+    # Open a file pointer for writing
     if file_obj["type"] in [".TXT", ".LOG", ".CSV", ".LIS"]:
         fp = open(destination_part, 'w')
         bin_mode = False
@@ -122,17 +126,19 @@ def download(file_obj: dict, ftp: ftplib.FTP) -> bool:
         fp.write(data)
         fp.write('\n')
 
-    print(f"Downloading {file_obj['name']} - v{file_obj['version']}")
+    print(f'Downloading {file_obj["parent"]}/{file_obj["name"]}{file_obj["type"]};{file_obj["version"]}')
     try:
         if bin_mode:
+            # Binary files
             ftp.retrbinary(f'RETR {file_obj["name"]}{file_obj["type"]};{file_obj["version"]}', fp.write)
         else:
+            # Text files
             ftp.retrlines(f'RETR {file_obj["name"]}{file_obj["type"]};{file_obj["version"]}', write_callback_nl)
     except ftplib.error_temp:
-        print("Temporary error downloading file")
+        print(f'Temporary error downloading file {file_obj["parent"]}/{file_obj["name"]}{file_obj["type"]};{file_obj["version"]}')
         return False
     except ftplib.error_perm:
-        print("Cannot download file (no longer exists?)")
+        print(f'Permanent error downloading file: {file_obj["parent"]}/{file_obj["name"]}{file_obj["type"]};{file_obj["version"]}')
         return False
     finally:
         fp.close()
